@@ -1,0 +1,19 @@
+{
+  "id": "faustina",
+  "firstName": "Faustina",
+  "lastName": "Minor",
+  "email": "faustina@example.com",
+  "country": "Roman Empire",
+  "city": "Rome",
+  "birthDate": "0130-02-17",
+  "experienceYears": 6,
+  "primarySkill": "Operations",
+  "secondarySkills": [
+    "Planning",
+    "Leadership"
+  ],
+  "weeklyAvailabilityHours": 30,
+  "hourlyRate": 90,
+  "currency": "EUR",
+  "bio": "Program manager focused on team execution and delivery."
+}
