@@ -1,11 +1,15 @@
-'use strict';
+import init from 'eslint-config-metarhia';
 
-const init = require('eslint-config-metarhia');
-
-module.exports = [
+export default [
   ...init,
   {
-    files: ['server.js', 'shared/**/*.mjs', 'static/**/*.mjs'],
+    files: [
+      '*.config.js',
+      'server.js',
+      'routes/**/*.js',
+      'shared/**/*.mjs',
+      'static/**/*.mjs',
+    ],
     languageOptions: {
       sourceType: 'module',
     },
