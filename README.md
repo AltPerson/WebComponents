@@ -38,7 +38,7 @@ The project must demonstrate shared domain logic that runs both in the browser a
 
 ## 3. Required Domain Idea
 
-The profile must contain data that requires real business logic. Use the domain model “Professional Profile”.
+The profile must contain data that requires real business logic. Use the domain model "Professional Profile".
 
 Example profile for user `marcus`:
 
@@ -253,6 +253,49 @@ The server must:
 - Do not expose files outside the project directory.
 - Prevent path traversal.
 
+### Server Routing
+
+The request dispatcher must be implemented as a **collection of route handlers**, not as a chain of `if/else` or `switch` statements. Each route is a plain object or function entry in a routing table. The dispatcher matches the incoming method and pathname against the table and delegates to the matched handler.
+
+Route handlers must be defined as separate named functions or imported from separate modules. The main `server.js` file must only contain the routing table, the dispatcher, and the server bootstrap.
+
+Suggested route modules:
+
+```text
+routes/
+  static.js      handles static file serving
+  profile.js     handles /profile/:username (GET, POST, PUT, DELETE)
+  profiles.js    handles /profiles (POST)
+  directory.js   handles /profile (GET, search)
+```
+
+Example routing table structure (method + path pattern as key):
+
+```js
+const routes = [
+  { method: 'GET', pattern: /^\/$/, handler: serveIndex },
+  { method: 'GET', pattern: /^\/profile$/, handler: listProfiles },
+  { method: 'POST', pattern: /^\/profiles$/, handler: createProfile },
+  {
+    method: 'GET',
+    pattern: /^\/profile\/(?<username>[^/]+)$/,
+    handler: getProfile,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/profile\/(?<username>[^/]+)$/,
+    handler: saveProfile,
+  },
+  {
+    method: 'DELETE',
+    pattern: /^\/profile\/(?<username>[^/]+)$/,
+    handler: deleteProfile,
+  },
+];
+```
+
+The dispatcher iterates the table, matches method and URL, extracts named groups, and calls the handler with `(req, res, params)`.
+
 ## 6. Client Requirements
 
 Use only native browser APIs:
@@ -292,6 +335,141 @@ profile-create-dialog
 - The app must provide UI controls to create profile and delete profile.
 - The create profile UI must run the shared domain module in-browser before submit.
 - Delete action must include a confirmation step before request.
+
+### Network Layer
+
+All `fetch` calls must be encapsulated in a single dedicated module:
+
+```text
+static/api.mjs
+```
+
+This module exports one async function per server endpoint. Components must never call `fetch` directly. They import and call the API functions from `api.mjs`.
+
+```js
+const getProfile = async (username) => { ... };
+const saveProfile = async (username, data) => { ... };
+const deleteProfile = async (username) => { ... };
+const searchProfiles = async ({ name, email } = {}) => { ... };
+const createProfile = async (data) => { ... };
+
+export { getProfile, saveProfile, deleteProfile, searchProfiles, createProfile };
+```
+
+Each function returns a normalized result object. HTTP error handling, JSON parsing and status checks happen inside `api.mjs`, not in components.
+
+### Template Strategy
+
+Each component's Shadow DOM markup lives in a dedicated `.html` file co-located with its `.mjs` file:
+
+```text
+static/components/
+  profile-item.mjs
+  profile-item.html
+```
+
+The `.html` file contains one `<template>` element with a matching `id`:
+
+```html
+<template id="profile-item">
+  <style>
+    :host {
+      display: block;
+    }
+    .name {
+      font-weight: 600;
+    }
+  </style>
+  <div class="item">
+    <div class="name" id="name"></div>
+    <div class="email" id="email"></div>
+  </div>
+</template>
+```
+
+**Server-side assembly.** When the server handles any request that returns `index.html` (the root `/` and all `/profile/:username` browser navigations), it reads `index.html` and all `static/components/*.html` files, concatenates the template fragments, and replaces a placeholder comment in `index.html` before sending the response:
+
+```html
+<!-- index.html -->
+<body>
+  <profile-app></profile-app>
+  <script type="module" src="/app.mjs"></script>
+  <!-- {{templates}} -->
+</body>
+```
+
+The browser receives a single document that already contains all `<template>` elements. No browser-side fetching, no `DOMParser`, no `async` in component modules.
+
+Components read their template synchronously from the document:
+
+```js
+class ProfileItem extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: 'open' });
+    this.shadowRoot.append(
+      document.getElementById('profile-item').content.cloneNode(true),
+    );
+  }
+}
+```
+
+This approach combines the best of both worlds: HTML structure stays in co-located `.html` files (pure HTML, editor-friendly, close to the component), while the browser pays zero extra requests and components remain fully synchronous.
+
+### Declarative Rendering
+
+Components must minimize imperative DOM construction. Follow these guidelines:
+
+- Use `<slot>` for variable child content instead of injecting children from JavaScript.
+- Drive display updates by setting `textContent` on pre-queried named elements rather than building new nodes.
+- For repeated items (profile list), clone the item template once per data entry and fill named child elements, rather than calling `createElement` and manually building the subtree.
+- For field-to-display mappings (computed fields in `profile-summary`), declare the mapping as a data structure and iterate it:
+
+```js
+const COMPUTED_ROWS = [
+  { key: 'displayName', label: 'Display', format: (v) => v || '-' },
+  { key: 'age', label: 'Age', format: (v) => v ?? '-' },
+  { key: 'seniorityLevel', label: 'Seniority', format: (v) => v || '-' },
+  {
+    key: 'monthlyCapacityHours',
+    label: 'Monthly Capacity',
+    format: (v) => v ?? '-',
+  },
+  {
+    key: 'estimatedMonthlyIncome',
+    label: 'Monthly Income',
+    format: (v) => v ?? '-',
+  },
+  {
+    key: 'profileCompleteness',
+    label: 'Completeness',
+    format: (v) => (v != null ? `${v}%` : '-'),
+  },
+  { key: 'publicSlug', label: 'Public Slug', format: (v) => v || '-' },
+];
+```
+
+- Avoid `while (el.firstChild) el.removeChild(el.firstChild)`. Prefer `el.replaceChildren()` or reset a container once.
+- Avoid dynamic element type switching at runtime (e.g. swapping `<input>` for `<textarea>`). Declare both in the template and show/hide with CSS via an attribute on the host.
+
+### Component Responsibilities
+
+Each component has one clear responsibility:
+
+| Component               | Responsibility                                                           |
+| ----------------------- | ------------------------------------------------------------------------ |
+| `profile-app`           | SPA shell: routing, Navigation API, top-level layout                     |
+| `profile-directory`     | Directory page: coordinates search, list, create dialog                  |
+| `profile-search`        | Debounced search input, emits `search-change` event                      |
+| `profile-list`          | Renders a list of profile summaries from a data property                 |
+| `profile-item`          | Renders one summary row, emits `open-profile` / `delete-profile`         |
+| `profile-form`          | Editable profile form driven by state; delegates saves via events or API |
+| `profile-field`         | Single labeled field with validation message display                     |
+| `profile-summary`       | Displays read-only computed fields                                       |
+| `validation-message`    | Displays one error string                                                |
+| `profile-create-dialog` | Modal wrapper for the create flow                                        |
+
+Components do not perform network requests inline. They call the API facade from `api.mjs` or receive data through properties and events.
 
 ## 7. Shared Domain Module
 
@@ -337,23 +515,34 @@ export {
 ## 8. Suggested Project Structure
 
 ```text
-  server.js
-  data/
-    profile/
-      marcus.json
-      faustina.json
-  shared/
-    profile-domain.mjs
-  static/
-    index.html
-    app.mjs
-    components/
-      profile-app.mjs
-      profile-form.mjs
-      profile-field.mjs
-      profile-summary.mjs
-      validation-message.mjs
-    styles.css
+server.js                   entry point: routing table + dispatcher + bootstrap
+routes/
+  static.js                 static file and shared module serving
+  directory.js              GET /profile  (search/list)
+  profiles.js               POST /profiles  (create)
+  profile.js                GET|POST|PUT|DELETE /profile/:username
+shared/
+  profile-domain.mjs        shared domain: normalize, validate, calculate
+data/
+  profile/
+    marcus.json
+    faustina.json
+static/
+  index.html                SPA shell (minimal, no embedded templates)
+  app.mjs                   imports and registers all components
+  api.mjs                   network facade (all fetch calls live here)
+  styles.css
+  components/
+    profile-app.mjs         + profile-app.html
+    profile-form.mjs        + profile-form.html
+    profile-field.mjs       + profile-field.html
+    profile-summary.mjs     + profile-summary.html
+    validation-message.mjs  + validation-message.html
+    profile-directory.mjs   + profile-directory.html
+    profile-search.mjs      + profile-search.html
+    profile-list.mjs
+    profile-item.mjs        + profile-item.html
+    profile-create-dialog.mjs + profile-create-dialog.html
 ```
 
 ## 9. API Contract
@@ -509,6 +698,10 @@ http://127.0.0.1:8000/profile/marcus
 - No npm dependencies are installed.
 - No framework or bundler is used.
 - The implementation remains small and readable.
+- All `fetch` calls are in `static/api.mjs` only.
+- The server routing table is a data structure iterated by a single dispatcher, not a chain of `if/else`.
+- All `<template>` elements are declared in `index.html`; component `.mjs` files contain no template strings.
+- Components contain no inline `fetch` calls and no raw DOM construction loops.
 
 ## 11. Non-Goals
 

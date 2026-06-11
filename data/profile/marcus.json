@@ -8,10 +8,7 @@
   "birthDate": "0121-04-26",
   "experienceYears": 12,
   "primarySkill": "Architecture",
-  "secondarySkills": [
-    "Node.js",
-    "Distributed Systems"
-  ],
+  "secondarySkills": ["Node.js", "Distributed Systems"],
   "weeklyAvailabilityHours": 1,
   "hourlyRate": 80,
   "currency": "EUR",
